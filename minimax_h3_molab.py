@@ -21,8 +21,9 @@ def _():
     using the notebook specs button before starting. The session ends after at
     most 12 hours or 90 minutes idle; this is an interactive notebook, not an API.
 
-    The transformer and text encoder below are community Q4 GGUF conversions of
-    MiniMax H3. Quantization saves memory but may change quality compared with
+    The transformer is a community Q4 GGUF conversion and the MiniMax H3 text
+    encoder is a community INT8 safetensors conversion. Quantization saves
+    memory but may change quality compared with
     the official BF16 checkpoint. Files download on the first run; nothing is
     Base64-embedded in the notebook.
 
@@ -106,11 +107,14 @@ def _(mo):
 
 
 @app.cell
-def _(Path, disk, first_frame, frames, gpu, height, mo, os, prompt, run_button, seed, shutil, steps, subprocess, width, work):
+def _(Path, first_frame, frames, gpu, height, mo, os, prompt, run_button, seed, shutil, steps, subprocess, width, work):
     mo.stop(not run_button.value)
     if gpu is None or gpu.total_memory < 80 * 2**30:
         raise RuntimeError("Attach the 96 GB NVIDIA GPU in molab notebook specs, then retry.")
-    if disk.free < 60 * 2**30:
+    old_encoder_cache = work / "hf-cache" / "hub" / "models--DeepBeepMeep--MiniMax-H3"
+    if old_encoder_cache.is_dir():
+        shutil.rmtree(old_encoder_cache)
+    if shutil.disk_usage(work).free < 60 * 2**30:
         raise RuntimeError("At least 60 GiB of temporary disk is needed for quantized weights and caches. This molab session has too little free disk.")
     if not prompt.value.strip():
         raise ValueError("Enter a text prompt.")
@@ -126,7 +130,7 @@ def _(Path, disk, first_frame, frames, gpu, height, mo, os, prompt, run_button, 
         "--model-path", "MiniMaxAI/MiniMax-H3",
         "--model-variant", "fl2va",
         "--component-weights-paths.transformer", "leejet/MiniMax-H3-GGUF/minimax_h3_fl2va-Q4_K_M.gguf",
-        "--component-weights-paths.text_encoder", "DeepBeepMeep/MiniMax-H3/Qwen3-VL-32B-Instruct/qwen3vl-32B-MiniMax-H3-Q4_K_M.gguf",
+        "--component-weights-paths.text_encoder", "Comfy-Org/MiniMax-H3/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
         "--num-gpus", "1",
         "--attention-backend", "fa",
         "--performance-mode", "memory",
