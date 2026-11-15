@@ -70,7 +70,7 @@ def _(install_button, mo, subprocess, sys, work):
     commands = [
         [sys.executable, "-m", "pip", "install", "-q", "uv"],
         [sys.executable, "-m", "uv", "venv", "--python", "3.12", str(venv)],
-        [sys.executable, "-m", "uv", "pip", "install", "--python", str(venv / "bin" / "python"), "--no-cache", "sglang[diffusion]==0.5.23", "--prerelease=allow"],
+        [sys.executable, "-m", "uv", "pip", "install", "--python", str(venv / "bin" / "python"), "--no-cache", "sglang[diffusion]==0.5.23", "comfy-kitchen==0.2.41", "--prerelease=allow"],
     ]
     for _command in commands:
         _result = subprocess.run(_command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -107,7 +107,7 @@ def _(mo):
 
 
 @app.cell
-def _(Path, first_frame, frames, gpu, height, mo, os, prompt, run_button, seed, shutil, steps, subprocess, width, work):
+def _(Path, first_frame, frames, gpu, height, mo, os, prompt, run_button, seed, shutil, steps, subprocess, sys, width, work):
     mo.stop(not run_button.value)
     if gpu is None or gpu.total_memory < 80 * 2**30:
         raise RuntimeError("Attach the 96 GB NVIDIA GPU in molab notebook specs, then retry.")
@@ -121,6 +121,15 @@ def _(Path, first_frame, frames, gpu, height, mo, os, prompt, run_button, seed, 
     _cli = work / "sglang-venv" / "bin" / "sglang"
     if not _cli.exists():
         raise RuntimeError("Install SGLang with the button above first.")
+    _venv_python = work / "sglang-venv" / "bin" / "python"
+    _kitchen_check = subprocess.run([str(_venv_python), "-c", "import comfy_kitchen"], capture_output=True, text=True)
+    if _kitchen_check.returncode:
+        _kitchen_install = subprocess.run(
+            [sys.executable, "-m", "uv", "pip", "install", "--python", str(_venv_python), "--no-cache", "comfy-kitchen==0.2.41"],
+            capture_output=True, text=True,
+        )
+        if _kitchen_install.returncode:
+            raise RuntimeError("Could not install comfy-kitchen in SGLang's Python environment:\n" + _kitchen_install.stderr[-4000:])
 
     output = work / "h3-output.mp4"
     if output.exists():
