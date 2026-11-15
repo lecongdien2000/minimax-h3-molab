@@ -74,7 +74,7 @@ def _(install_button, mo, subprocess, sys, work):
     commands = [
         [sys.executable, "-m", "pip", "install", "-q", "uv"],
         [sys.executable, "-m", "uv", "venv", "--python", "3.12", str(venv)],
-        [sys.executable, "-m", "uv", "pip", "install", "--python", str(venv / "bin" / "python"), "--no-cache", "sglang[diffusion]==0.5.23", "comfy-kitchen==0.2.41", "--prerelease=allow"],
+        [sys.executable, "-m", "uv", "pip", "install", "--python", str(venv / "bin" / "python"), "--no-cache", "sglang[diffusion]==0.5.23", "comfy-kitchen==0.2.41", "ninja==1.13.2", "--prerelease=allow"],
     ]
     for _command in commands:
         _result = subprocess.run(_command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -143,6 +143,15 @@ def _(Path, duration, first_frame, mo, os, prompt, run_button, seed, short_edge,
         )
         if _kitchen_install.returncode:
             raise RuntimeError("Could not install comfy-kitchen in SGLang's Python environment:\n" + _kitchen_install.stderr[-4000:])
+    _venv_bin = work / "sglang-venv" / "bin"
+    _ninja = _venv_bin / "ninja"
+    if not _ninja.exists():
+        _ninja_install = subprocess.run(
+            [sys.executable, "-m", "uv", "pip", "install", "--python", str(_venv_python), "--no-cache", "ninja==1.13.2"],
+            capture_output=True, text=True,
+        )
+        if _ninja_install.returncode or not _ninja.exists():
+            raise RuntimeError("Could not install Ninja for SGLang's JIT kernels:\n" + _ninja_install.stderr[-4000:])
 
     output = work / "h3-output.mp4"
     if output.exists():
@@ -192,11 +201,13 @@ def _(Path, duration, first_frame, mo, os, prompt, run_button, seed, short_edge,
     ]
     env = os.environ.copy()
     env["HF_HOME"] = str(work / "hf-cache")
+    env["PATH"] = str(_venv_bin) + os.pathsep + env.get("PATH", "")
     with (work / "generation.log").open("w", encoding="utf-8") as log:
         result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, env=env)
     if result.returncode or not output.exists():
         tail = (work / "generation.log").read_text(encoding="utf-8", errors="replace")[-8000:]
-        raise RuntimeError(f"H3 generation failed (exit {result.returncode}). Log tail:\n{tail}")
+        reason = f"SGLang exited {result.returncode}" if result.returncode else "SGLang produced no video despite exiting 0"
+        raise RuntimeError(f"H3 generation failed: {reason}. Log tail:\n{tail}")
     mo.vstack([mo.md(f"Generated **{output.name}**"), mo.video(str(output))])
     return
 
