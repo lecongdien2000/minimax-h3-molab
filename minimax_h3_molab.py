@@ -62,17 +62,22 @@ def _(mo):
 
 
 @app.cell
-def _(install_button, mo, subprocess, sys):
+def _(install_button, mo, subprocess, sys, work):
     mo.stop(not install_button.value)
+    venv = work / "sglang-venv"
+    _cli = venv / "bin" / "sglang"
     commands = [
         [sys.executable, "-m", "pip", "install", "-q", "uv"],
-        [sys.executable, "-m", "uv", "pip", "install", "--system", "sglang[diffusion]", "--prerelease=allow"],
+        [sys.executable, "-m", "uv", "venv", "--python", "3.12", str(venv)],
+        [sys.executable, "-m", "uv", "pip", "install", "--python", str(venv / "bin" / "python"), "--no-cache", "sglang[diffusion]==0.5.23", "--prerelease=allow"],
     ]
     for _command in commands:
         _result = subprocess.run(_command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         if _result.returncode:
             raise RuntimeError(f"Install failed ({_result.returncode}):\n{_result.stdout[-6000:]}")
-    mo.md("SGLang installed. If the next cell cannot find `sglang`, restart the molab kernel once.")
+    if not _cli.exists():
+        raise RuntimeError("Installation finished, but the SGLang command was not created.")
+    mo.md("SGLang installed in a separate Python 3.12 environment. Generate below without restarting the notebook.")
     return
 
 
@@ -109,14 +114,15 @@ def _(Path, disk, first_frame, frames, gpu, height, mo, os, prompt, run_button, 
         raise RuntimeError("At least 60 GiB of temporary disk is needed for quantized weights and caches. This molab session has too little free disk.")
     if not prompt.value.strip():
         raise ValueError("Enter a text prompt.")
-    if not shutil.which("sglang"):
-        raise RuntimeError("Install SGLang with the button above, then restart the kernel if needed.")
+    _cli = work / "sglang-venv" / "bin" / "sglang"
+    if not _cli.exists():
+        raise RuntimeError("Install SGLang with the button above first.")
 
     output = work / "h3-output.mp4"
     if output.exists():
         output.unlink()
     command = [
-        "sglang", "generate",
+        str(_cli), "generate",
         "--model-path", "MiniMaxAI/MiniMax-H3",
         "--model-variant", "fl2va",
         "--component-weights-paths.transformer", "leejet/MiniMax-H3-GGUF/minimax_h3_fl2va-Q4_K_M.gguf",
