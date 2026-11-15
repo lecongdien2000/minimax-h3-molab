@@ -43,16 +43,20 @@ def _(mo):
 
     work = Path("/tmp/minimax-h3-molab")
     work.mkdir(parents=True, exist_ok=True)
-    gpu = None
+    gpu_mib = 0
     try:
-        import torch
-        gpu = torch.cuda.get_device_properties(0) if torch.cuda.is_available() else None
-        gpu_info = f"{gpu.name}, {gpu.total_memory / 2**30:.1f} GiB VRAM" if gpu else "No NVIDIA GPU attached"
+        _gpu_query = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, check=True,
+        )
+        _gpu_name, _gpu_memory = _gpu_query.stdout.splitlines()[0].rsplit(",", 1)
+        gpu_mib = int(_gpu_memory.strip())
+        gpu_info = f"{_gpu_name.strip()}, {gpu_mib / 1024:.1f} GiB VRAM"
     except Exception as exc:
-        gpu_info = f"GPU check failed: {exc}"
+        gpu_info = f"NVIDIA GPU not visible to this session ({exc})"
     disk = shutil.disk_usage(work)
     mo.md(f"**GPU:** {gpu_info}  \n**Free temporary disk:** {disk.free / 2**30:.1f} GiB  \n**Python:** {sys.version.split()[0]}")
-    return Path, os, shutil, subprocess, sys, work, gpu, disk
+    return Path, os, shutil, subprocess, sys, work, gpu_mib, disk
 
 
 @app.cell
@@ -107,10 +111,23 @@ def _(mo):
 
 
 @app.cell
-def _(Path, first_frame, frames, gpu, height, mo, os, prompt, run_button, seed, shutil, steps, subprocess, sys, width, work):
+def _(Path, first_frame, frames, height, mo, os, prompt, run_button, seed, shutil, steps, subprocess, sys, width, work):
     mo.stop(not run_button.value)
-    if gpu is None or gpu.total_memory < 80 * 2**30:
-        raise RuntimeError("Attach the 96 GB NVIDIA GPU in molab notebook specs, then retry.")
+    _cli = work / "sglang-venv" / "bin" / "sglang"
+    if not _cli.exists():
+        raise RuntimeError("Install SGLang with the button above first.")
+    _venv_python = work / "sglang-venv" / "bin" / "python"
+    _gpu_check = subprocess.run(
+        [str(_venv_python), "-c", "import torch; print(torch.cuda.get_device_properties(0).total_memory if torch.cuda.is_available() else 0)"],
+        capture_output=True, text=True,
+    )
+    if _gpu_check.returncode:
+        raise RuntimeError("SGLang's Python could not check CUDA:\n" + _gpu_check.stderr[-2000:])
+    _gpu_bytes = int(_gpu_check.stdout.strip())
+    if _gpu_bytes == 0:
+        raise RuntimeError("No NVIDIA GPU is visible to SGLang. Attach the GPU in Molab notebook specs and wait for the session to restart, then retry.")
+    if _gpu_bytes < 80 * 2**30:
+        raise RuntimeError(f"SGLang sees only {_gpu_bytes / 2**30:.1f} GiB VRAM. Select Molab's 96 GB GPU in notebook specs.")
     old_encoder_cache = work / "hf-cache" / "hub" / "models--DeepBeepMeep--MiniMax-H3"
     if old_encoder_cache.is_dir():
         shutil.rmtree(old_encoder_cache)
@@ -118,10 +135,6 @@ def _(Path, first_frame, frames, gpu, height, mo, os, prompt, run_button, seed, 
         raise RuntimeError("At least 60 GiB of temporary disk is needed for quantized weights and caches. This molab session has too little free disk.")
     if not prompt.value.strip():
         raise ValueError("Enter a text prompt.")
-    _cli = work / "sglang-venv" / "bin" / "sglang"
-    if not _cli.exists():
-        raise RuntimeError("Install SGLang with the button above first.")
-    _venv_python = work / "sglang-venv" / "bin" / "python"
     _kitchen_check = subprocess.run([str(_venv_python), "-c", "import comfy_kitchen"], capture_output=True, text=True)
     if _kitchen_check.returncode:
         _kitchen_install = subprocess.run(
