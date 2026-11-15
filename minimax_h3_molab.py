@@ -94,13 +94,12 @@ def _(mo):
         rows=4,
     )
     first_frame = mo.ui.file(filetypes=[".png", ".jpg", ".jpeg", ".webp"], kind="area", label="Optional first frame")
-    width = mo.ui.dropdown(options=["864", "960", "1344"], value="864", label="Width")
-    height = mo.ui.dropdown(options=["480", "544", "768"], value="480", label="Height")
-    frames = mo.ui.dropdown(options=["101", "125", "173"], value="125", label="Frames at 24 fps")
+    short_edge = mo.ui.dropdown(options=["480", "544", "768"], value="480", label="Short edge (16:9)")
+    duration = mo.ui.dropdown(options=["5", "7", "10"], value="5", label="Duration (seconds)")
     steps = mo.ui.slider(start=20, stop=50, step=5, value=40, label="Sampling steps")
     seed = mo.ui.number(value=42, start=0, step=1, label="Seed")
-    mo.vstack([prompt, first_frame, mo.hstack([width, height, frames]), mo.hstack([steps, seed])])
-    return prompt, first_frame, width, height, frames, steps, seed
+    mo.vstack([prompt, first_frame, mo.hstack([short_edge, duration]), mo.hstack([steps, seed])])
+    return prompt, first_frame, short_edge, duration, steps, seed
 
 
 @app.cell
@@ -111,8 +110,9 @@ def _(mo):
 
 
 @app.cell
-def _(Path, first_frame, frames, height, mo, os, prompt, run_button, seed, shutil, steps, subprocess, sys, width, work):
+def _(Path, duration, first_frame, mo, os, prompt, run_button, seed, short_edge, shutil, steps, subprocess, sys, work):
     mo.stop(not run_button.value)
+    import json
     _cli = work / "sglang-venv" / "bin" / "sglang"
     if not _cli.exists():
         raise RuntimeError("Install SGLang with the button above first.")
@@ -147,8 +147,34 @@ def _(Path, first_frame, frames, height, mo, os, prompt, run_button, seed, shuti
     output = work / "h3-output.mp4"
     if output.exists():
         output.unlink()
+    request = {
+        "task": "t2va",
+        "conditions": [],
+        "target": {
+            "short_edge": int(short_edge.value),
+            "aspect_ratio": "16:9",
+            "duration_seconds": float(duration.value),
+        },
+    }
+    if first_frame.value:
+        upload = first_frame.value[0]
+        suffix = Path(upload.name).suffix.lower()
+        image_path = work / f"first-frame{suffix}"
+        image_path.write_bytes(upload.contents)
+        request["task"] = "fl2va"
+        request["conditions"] = [{
+            "type": "image",
+            "uri": image_path.as_uri(),
+            "role": "keyframe",
+            "frame_index": 0,
+        }]
+        request["target"]["aspect_ratio"] = "auto"
+    request_path = work / "h3-request.json"
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+
     command = [
         str(_cli), "generate",
+        "--config", str(request_path),
         "--model-path", "MiniMaxAI/MiniMax-H3",
         "--model-variant", "fl2va",
         "--component-weights-paths.transformer", "leejet/MiniMax-H3-GGUF/minimax_h3_fl2va-Q4_K_M.gguf",
@@ -158,23 +184,12 @@ def _(Path, first_frame, frames, height, mo, os, prompt, run_button, seed, shuti
         "--performance-mode", "memory",
         "--enable-torch-compile", "false",
         "--prompt", prompt.value.strip(),
-        "--width", width.value,
-        "--height", height.value,
-        "--num-frames", frames.value,
-        "--fps", "24",
         "--num-inference-steps", str(steps.value),
         "--seed", str(int(seed.value)),
         "--save-output",
         "--output-path", str(work),
         "--output-file-name", output.name,
     ]
-    if first_frame.value:
-        upload = first_frame.value[0]
-        suffix = Path(upload.name).suffix.lower()
-        image_path = work / f"first-frame{suffix}"
-        image_path.write_bytes(upload.contents)
-        command.extend(["--image-path", str(image_path)])
-
     env = os.environ.copy()
     env["HF_HOME"] = str(work / "hf-cache")
     with (work / "generation.log").open("w", encoding="utf-8") as log:
