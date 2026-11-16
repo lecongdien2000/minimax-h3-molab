@@ -171,6 +171,23 @@ def _(Path, duration, first_frame, mo, os, prompt, run_button, seed, short_edge,
         )
         if _cccl_install.returncode or not (_cuda_include / "nv" / "target").is_file():
             raise RuntimeError("Could not install CUDA CCCL headers for nvcc:\n" + _cccl_install.stderr[-4000:])
+    _cuda_runtime = work / "cuda-runtime"
+    _cuda_runtime_lib = _cuda_runtime / "nvidia" / "cu13" / "lib"
+    _cudart = _cuda_runtime_lib / "libcudart.so.13"
+    if not _cudart.is_file():
+        _runtime_install = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--no-deps", "--upgrade", "--target", str(_cuda_runtime),
+             f"nvidia-cuda-runtime>=13.{_cuda_minor},<13.{_cuda_minor + 1}"],
+            capture_output=True, text=True,
+        )
+        if _runtime_install.returncode or not _cudart.is_file():
+            raise RuntimeError("Could not install the CUDA runtime library for SGLang's JIT linker:\n" + _runtime_install.stderr[-4000:])
+    _cuda_link = work / "cuda-link"
+    _cuda_link.mkdir(exist_ok=True)
+    _cudart_link = _cuda_link / "libcudart.so"
+    if _cudart_link.is_symlink() or _cudart_link.exists():
+        _cudart_link.unlink()
+    _cudart_link.symlink_to(_cudart)
 
     output = work / "h3-output.mp4"
     if output.exists():
@@ -224,6 +241,8 @@ def _(Path, duration, first_frame, mo, os, prompt, run_button, seed, short_edge,
     env["NVCC_PREPEND_FLAGS"] = (
         f"-I{_cuda_include} -I{_cuda_include / 'cccl'} " + env.get("NVCC_PREPEND_FLAGS", "")
     ).strip()
+    env["LIBRARY_PATH"] = str(_cuda_link) + os.pathsep + env.get("LIBRARY_PATH", "")
+    env["LD_LIBRARY_PATH"] = str(_cuda_runtime_lib) + os.pathsep + env.get("LD_LIBRARY_PATH", "")
     with (work / "generation.log").open("w", encoding="utf-8") as log:
         result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, env=env)
     if result.returncode or not output.exists():
