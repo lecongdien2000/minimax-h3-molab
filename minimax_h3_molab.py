@@ -152,6 +152,25 @@ def _(Path, duration, first_frame, mo, os, prompt, run_button, seed, short_edge,
         )
         if _ninja_install.returncode or not _ninja.exists():
             raise RuntimeError("Could not install Ninja for SGLang's JIT kernels:\n" + _ninja_install.stderr[-4000:])
+    _nvcc = shutil.which("nvcc")
+    if not _nvcc:
+        raise RuntimeError("CUDA nvcc is missing from Molab. Attach the NVIDIA GPU and restart the notebook session.")
+    import re
+    _nvcc_version = subprocess.run([_nvcc, "--version"], capture_output=True, text=True)
+    _release = re.search(r"release (\d+)\.(\d+)", _nvcc_version.stdout)
+    if _nvcc_version.returncode or not _release or _release.group(1) != "13":
+        raise RuntimeError("Expected CUDA 13 nvcc; found:\n" + (_nvcc_version.stdout + _nvcc_version.stderr)[-2000:])
+    _cuda_minor = int(_release.group(2))
+    _cuda_headers = work / "cuda-headers"
+    _cuda_include = _cuda_headers / "nvidia" / "cu13" / "include"
+    if not (_cuda_include / "nv" / "target").is_file():
+        _cccl_install = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--no-deps", "--upgrade", "--target", str(_cuda_headers),
+             f"nvidia-cuda-cccl>=13.{_cuda_minor},<13.{_cuda_minor + 1}"],
+            capture_output=True, text=True,
+        )
+        if _cccl_install.returncode or not (_cuda_include / "nv" / "target").is_file():
+            raise RuntimeError("Could not install CUDA CCCL headers for nvcc:\n" + _cccl_install.stderr[-4000:])
 
     output = work / "h3-output.mp4"
     if output.exists():
@@ -202,6 +221,9 @@ def _(Path, duration, first_frame, mo, os, prompt, run_button, seed, short_edge,
     env = os.environ.copy()
     env["HF_HOME"] = str(work / "hf-cache")
     env["PATH"] = str(_venv_bin) + os.pathsep + env.get("PATH", "")
+    env["NVCC_PREPEND_FLAGS"] = (
+        f"-I{_cuda_include} -I{_cuda_include / 'cccl'} " + env.get("NVCC_PREPEND_FLAGS", "")
+    ).strip()
     with (work / "generation.log").open("w", encoding="utf-8") as log:
         result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, env=env)
     if result.returncode or not output.exists():
