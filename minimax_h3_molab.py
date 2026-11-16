@@ -188,6 +188,14 @@ def _(Path, duration, first_frame, mo, os, prompt, run_button, seed, short_edge,
     if _cudart_link.is_symlink() or _cudart_link.exists():
         _cudart_link.unlink()
     _cudart_link.symlink_to(_cudart)
+    _toolchain = _venv_bin.parent / "lib" / "python3.12" / "site-packages" / "sglang" / "kernels" / "jit" / "utils" / "compile" / "toolchain.py"
+    _toolchain_source = _toolchain.read_text(encoding="utf-8")
+    _link_flags = 'return flags + [f"-L{cuda_home()}/lib64", "-lcudart"]'
+    _fixed_link_flags = f'return flags + [f"-L{{cuda_home()}}/lib64", "-L{_cuda_link}", "-lcudart"]'
+    if _link_flags in _toolchain_source:
+        _toolchain.write_text(_toolchain_source.replace(_link_flags, _fixed_link_flags), encoding="utf-8")
+    elif _fixed_link_flags not in _toolchain_source:
+        raise RuntimeError("SGLang's CUDA link flags have changed; cannot add the CUDA runtime library safely.")
 
     output = work / "h3-output.mp4"
     if output.exists():
